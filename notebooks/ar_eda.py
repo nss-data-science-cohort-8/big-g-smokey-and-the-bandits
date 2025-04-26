@@ -28,6 +28,14 @@ print(diagnostics_raw.isna().sum())
 n_ids = len(diagnostics_raw["Id"])
 n_unique_id = diagnostics_raw["Id"].nunique()
 n_un_faults = diagnostics_raw["FaultId"].nunique()
+
+diagnostics_raw["Value"] = diagnostics_raw["Value"].replace(
+    {"FALSE": False, "TRUE": True}
+)
+# pivot diagnostics to long format
+diagnostics = diagnostics_raw.pivot(
+    index="FaultId", columns="Name", values="Value"
+)
 print(f"\nlen(Id): {n_ids}", f"\nN unique_Id: {n_unique_id}")
 print("\n--------RECORD ID vs FAULT ID--------")
 print(
@@ -35,7 +43,7 @@ print(
     f"\nn_unique RecordID: {faults['RecordID'].nunique()}",
 )
 joined = faults.merge(
-    diagnostics_raw, how="inner", left_on="RecordID", right_on="FaultId"
+    diagnostics, how="inner", left_on="RecordID", right_on="FaultId"
 )
 print("\n\n--------JOINED--------")
 print(joined.head())
@@ -43,14 +51,15 @@ print("\n\n--------JOINED COLUMNS---------")
 print(joined.columns)
 
 # filter out near service stations
-print("Filtering out faults near service stations...")
+joined_pre_station_filter = joined
+print("Labeling faults near service stations...")
 stations = pd.DataFrame(
     {
         "lat": [36.0666667, 35.5883333, 36.1950],
         "lon": [-86.4347222, -86.4438888, -83.174722],
     }
 )
-threshold_miles = 1
+threshold_miles = 0.5
 threshold_meters = threshold_miles * 1609.34
 # create geodataframes with geopandas
 gdf_joined = gpd.GeoDataFrame(
@@ -74,17 +83,20 @@ combined_buffer = (
 )  # turns into single geometry which helps with efficiency
 is_within = gdf_joined_proj.geometry.within(combined_buffer)
 joined["nearStation"] = is_within.values
-joined = joined[joined["nearStation"] == False]
-print("\nDone! \nFaults within 1km of service station removed from joined.\n")
+joined_post_filter = joined[joined["nearStation"] == False]
+print("\nDone! \nFaults within 1km of service station labeled in 'joined'.\n")
 print(joined.head(3))
+print(
+    f"\nWhen filtered, this removes {len(joined_pre_station_filter['RecordID']) - len(joined_post_filter['RecordID'])} rows"
+)
 
 # select out derates
 full_derates_raw = joined[joined["spn"] == 5246]
 partial_derates_raw = joined[(joined["spn"] == 1569) & (joined["fmi"] == 31)]
-print("--------FULL DERATES---------")
-display(f"derate shape: {full_derates_raw.shape}", full_derates_raw.head(3))
-print("\n--------PARTIAL DERATES---------")
-display(
-    f"partial derate shape: {partial_derates_raw.shape}",
-    partial_derates_raw.head(3),
-)
+# print("--------FULL DERATES---------")
+# print(f"derate shape: {full_derates_raw.shape}", full_derates_raw.head(3))
+# print("\n--------PARTIAL DERATES---------")
+# print(
+#     f"partial derate shape: {partial_derates_raw.shape}",
+#     partial_derates_raw.head(3),
+# )
