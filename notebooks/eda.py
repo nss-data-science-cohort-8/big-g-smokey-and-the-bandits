@@ -1,5 +1,4 @@
 # imports
-from numpy import diag
 import pandas as pd
 from geopy.distance import geodesic
 
@@ -7,7 +6,9 @@ from geopy.distance import geodesic
 faults = pd.read_csv("../data/J1939Faults.csv")
 diagnostics = pd.read_csv("../data/VehicleDiagnosticOnboardData.csv")
 print("----Raw Data----")
-print(f"faults.shape: {faults.shape}", f"diagnostics.shape: {diagnostics.shape}")
+print(
+    f"faults.shape: {faults.shape}", f"diagnostics.shape: {diagnostics.shape}"
+)
 print(f"\nfaults: {faults}", f"\ndiagnostics: {diagnostics}")
 # drop unneccesary columns
 drop_list = [
@@ -23,7 +24,7 @@ drop_list = [
     "MCTNumber",
 ]
 faults = faults.drop(columns=drop_list)
-print(f'\nfaults.head(), shape: {faults.head(), faults.shape}')
+print(f"\nfaults.head(), shape: {faults.head(), faults.shape}")
 
 # identify service station locations
 service_stations = [
@@ -48,7 +49,9 @@ faults["IsServiceStation"] = faults.apply(
     lambda row: is_near_service_station(row["Latitude"], row["Longitude"]),
     axis=1,
 )
-print(f'\nfaults["IsServiceStation"]: {faults["IsServiceStation"].value_counts(normalize=True)}')  # proportion near service stations.
+print(
+    f'\nfaults["IsServiceStation"]: {faults["IsServiceStation"].value_counts(normalize=True)}'
+)  # proportion near service stations.
 diagnostics["Value"] = diagnostics["Value"].replace(
     {"FALSE": False, "TRUE": True}
 )
@@ -66,7 +69,9 @@ combined = pd.merge(
 )
 combined_filtered = combined[~combined["IsServiceStation"]]
 combined["IsDerateFull"] = combined["spn"] == 5246
-print(f"\ncombined['IsDerateFull']: { combined['IsDerateFull'].value_counts(normalize=True) }")
+print(
+    f"\ncombined['IsDerateFull']: {combined['IsDerateFull'].value_counts(normalize=True)}"
+)
 print("\n----Combined features and faults----")
 print(f"combined.head(): {combined.head()}")
 
