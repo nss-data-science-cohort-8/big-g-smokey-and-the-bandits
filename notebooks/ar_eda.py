@@ -147,68 +147,26 @@ col_order = [
     "ESS_Id",
     "ecuSerialNumber",
 ]
-target_spn = 5426
+target_spn = 5246
 joined["EventTimeStamp"] = pd.to_datetime(joined["EventTimeStamp"]).copy()
 joined = joined[col_order]
-joined_sorted = joined.sort_values(
-    by=["EquipmentID", "EventTimeStamp"], ascending=[True, False]
-).reset_index(drop=True)
-time_window = pd.Timedelta(hours=2)
-
-# 1. Create a Series containing only the timestamps of trigger events
-trigger_timestamps_only = joined_sorted["EventTimeStamp"].where(
-    joined_sorted["spn"] == target_spn
-)
-# 2. For each row, find the timestamp of the *next* trigger event within its group
-#    Group by EquipmentID and use backward fill (bfill)
-#    This fills NaT values with the next valid timestamp in the group
-joined_sorted["next_trigger_time"] = trigger_timestamps_only.groupby(
-    joined_sorted["EquipmentID"]
+# Create a Series containing only the timestamps of trigger events
+trigger_timestamps_only = joined["EventTimeStamp"].where(joined["spn"] == 5426)
+# For each row, find the timestamp of the *next* trigger event within its group
+# Group by EquipmentID and use backward fill (bfill)
+# This fills NaT values with the next valid timestamp in the group
+joined["next_trigger_time"] = trigger_timestamps_only.groupby(
+    joined["EquipmentID"]
 ).bfill()
 # 3. Calculate the start of the 2-hour window before the next trigger
-joined_sorted["window_start_time"] = (
-    joined_sorted["next_trigger_time"] - time_window
+joined["window_start_time"] = joined["next_trigger_time"] - pd.Timedelta(
+    hours=2
 )
-
 # 4. Label rows as True if their timestamp falls within the window:
 #    [window_start_time, next_trigger_time]
 #    Also ensure that a next_trigger_time actually exists (it's not NaT)
-joined_sorted["derate_window"] = (
-    (joined_sorted["EventTimeStamp"] >= joined_sorted["window_start_time"])
-    & (joined_sorted["EventTimeStamp"] <= joined_sorted["next_trigger_time"])
-    & (joined_sorted["next_trigger_time"].notna())
+joined["derate_window"] = (
+    (joined["EventTimeStamp"] >= joined["window_start_time"])
+    & (joined["EventTimeStamp"] <= joined["next_trigger_time"])
+    & (joined["next_trigger_time"].notna())
 )
-# 5. Clean up temporary columns
-result_df = joined_sorted.drop(
-    columns=["next_trigger_time", "window_start_time"]
-)
-# Display some results for verification
-print(
-    result_df[["EquipmentID", "EventTimeStamp", "spn", "derate_window"]].head(
-        10
-    )
-)
-print("\nValue counts for 'derate_window':")
-print(result_df["derate_window"].value_counts())
-
-# Example check: Find a trigger and look at preceding rows
-trigger_indices = result_df[result_df["spn"] == target_spn].index
-if len(trigger_indices) > 0:
-    example_index = trigger_indices[0]
-    print(f"\nExample around first trigger (index {example_index}):")
-    print(
-        result_df.iloc[max(0, example_index - 5) : example_index + 2][
-            ["EquipmentID", "EventTimeStamp", "spn", "derate_window"]
-        ]
-    )
-
-print(
-    result_df[result_df["EquipmentID"] == "1524"]
-    .sort_values(by=["EquipmentID", "EventTimeStamp"], ascending=[True, False])
-    .reset_index(drop=True)[
-        ["EquipmentID", "EventTimeStamp", "spn", "derate_window"]
-    ]
-    .head(50)
-)
-# You can now use result_df
-# joined = result_df # Optional: overwrite original variable
