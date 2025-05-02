@@ -1,291 +1,113 @@
-import warnings
-
-import geopandas as gpd
+# import libraries
+import matplotlib.pyplot as plt
 import pandas as pd
-
-# No ydf.keras import needed here
-
-# Suppress specific warnings if needed (e.g., from geopandas deprecation)
-warnings.filterwarnings("ignore", category=FutureWarning, module="geopandas")
-
-
-# Load & prepare data
-# Note: Removed try-except block for file loading. Script will crash if files are missing.
-print("Loading data...")
-faults_raw = pd.read_csv(
-    "../data/J1939Faults.csv", dtype={"EquipmentID": str, "spn": int}
+import ydf
+from sklearn.metrics import (
+    ConfusionMatrixDisplay,
+    classification_report,
+    confusion_matrix,
+    f1_score,
 )
-diagnostics_raw = pd.read_csv("../data/VehicleDiagnosticOnboardData.csv")
+from sklearn.model_selection import train_test_split
 
-print("Preparing data...")
-diagnostics_raw["Value"] = diagnostics_raw["Value"].replace(
-    {"FALSE": False, "TRUE": True}
+# load data
+dtypes = {
+    "EquipmentID": object,
+    # "EventTimeStamp": "datetime64[ns]",
+    "spn": int,
+    "fmi": int,
+    "active": bool,
+    "derate_window": bool,
+    "time_since_last_fault": float,
+    "fault_frequency": int,
+    "Latitude": float,
+    "Longitude": float,
+    "nearStation": bool,
+    "Speed": float,
+    "BarometricPressure": float,
+    "EngineCoolantTemperature": float,
+    "EngineLoad": float,
+    "EngineOilPressure": float,
+    "EngineOilTemperature": float,
+    "EngineRpm": float,
+    "EngineTimeLtd": float,
+    "FuelLtd": float,
+    "FuelRate": float,
+    "FuelTemperature": float,
+    "Throttle": float,
+    "TurboBoostPressure": float,
+}
+data = pd.read_csv(
+    "../data/model_data.csv", dtype=dtypes, parse_dates=["EventTimeStamp"]
 )
-# pivot diagnostics to long format
-diagnostics = diagnostics_raw.pivot(
-    index="FaultId", columns="Name", values="Value"
-)
-# Prepare faults
-drop_cols = [
-    "actionDescription",
-    # "activeTransitionCount", # Keep this potentially useful feature
-    "eventDescription",
-    "ecuSource",
-    "ecuSoftwareVersion",
-    "ecuModel",
-    "ecuMake",
-    "faultValue",
-    "MCTNumber",
-    "ServiceDistance",
-    "LocationTimeStamp",
-    "ecuSerialNumber",  # Often redundant with EquipmentID or high cardinality
+
+# prep data for split
+predictors = [
+    col
+    for col in data.columns
+    if col not in ["EquipmentID", "EventTimeStamp", "derate_window"]
 ]
-# Filter out columns that might not exist in the actual dataset
-drop_cols = [col for col in drop_cols if col in faults_raw.columns]
-faults = faults_raw.drop(columns=drop_cols)
+target = "derate_window"
+X = data[predictors]
+y = data[target]
 
-
-# Join diagnostics
-print("Joining fault and diagnostic data...")
-joined = faults.merge(
-    diagnostics, how="inner", left_on="RecordID", right_on="FaultId"
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, stratify=y, test_size=0.3, random_state=42
 )
 
+# Concatenate features and target for YDF training
+train_df = pd.concat([X_train, y_train], axis=1)
+test_df = pd.concat([X_test, y_test], axis=1)
+# --- Adjustments for Model Improvement ---
+print("Starting model training with tuned hyperparameters...")
 
-state_cols = [
-    "active",
-    "CruiseControlActive",
-    "IgnStatus",
-    "nearStation",
-    "LampStatus",
-    "ParkingBrake",
-]
-sensor_cols = [
-    "AcceleratorPedal",
-    "BarometricPressure",
-    "CruiseControlSetSpeed",
-    "DistanceLtd",
-    "EngineCoolantTemperature",
-    "EngineLoad",
-    "EngineOilPressure",
-    "EngineOilTemperature",
-    "EngineRpm",
-    "EngineTimeLtd",
-    "FuelLevel",
-    "FuelLtd",
-    "FuelRate",
-    "FuelTemperature",
-    "IntakeManifoldTemperature",
-    "Speed",
-    "SwitchedBatteryVoltage",
-    "Throttle",
-    "TurboBoostPressure",
-]
+model = ydf.GradientBoostedTreesLearner(
+    label="derate_window",  # Target column name
+    task=ydf.Task.CLASSIFICATION,
+    num_trees=500,
+    max_depth=10,
+    shrinkage=0.1,  # A common starting learning rate
+    l2_regularization=0.01,  # ridge regression
+    subsample=0.8,  # Use 80% of data per tree
+).train(train_df)
+print("Model training complete.")
 
-joined[sensor_cols] = joined[sensor_cols].astype(float)
-joined[state_cols] = joined[state_cols].astype(str)
+# --- Adjustments for Evaluation ---
+# Test the model
+y_pred_proba = model.predict(test_df)  # Get probability predictions
+# are any of these predictions occuring outside the 2 hour mark or derate window?
+# need to find a way to match these up with test values to determine the probabilities matched with timestamps and filter out inside 2 hour window.
+# Convert probabilities to class predictions using a 0.5 threshold
+y_pred_class = y_pred_proba > 0.5
 
-# --- Geospatial Filtering ---
-# Note: Removed try-except block for geospatial operations. Script will crash on errors.
-print("Labeling faults near service stations...")
-joined_pre_station_filter = joined
-stations = pd.DataFrame(
-    {
-        "lat": [36.0666667, 35.5883333, 36.1950],
-        "lon": [-86.4347222, -86.4438888, -83.174722],
-    }
+# Evaluate using YDF's built-in evaluation (optional but provides detailed report)
+evaluation = model.evaluate(test_df)
+print("Full evaluation report: ", evaluation)
+
+# Evaluate using sklearn's f1_score
+print("Calculating macro F1 score...")
+macro_f1 = f1_score(y_test, y_pred_class, average="macro")
+print(f"Macro F1 Score: {macro_f1:.4f}")
+
+# Optional: Print classification report and confusion matrix for more detail
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred_class))
+
+print("\nConfusion Matrix:")
+cm = confusion_matrix(y_test, y_pred_class)
+disp = ConfusionMatrixDisplay(
+    confusion_matrix=cm, display_labels=sorted(y_test.unique())
 )
-threshold_miles = 0.5
-threshold_meters = threshold_miles * 1609.34
+disp.plot()
+plt.title("Confusion Matrix")
 
-# create geodataframes with geopandas
-gdf_joined = gpd.GeoDataFrame(
-    joined,
-    geometry=gpd.points_from_xy(
-        joined.Longitude, joined.Latitude
-    ),  # Use Longitude, Latitude order
-    crs="EPSG:4326",  # WGS84 coord ref sys (lat/lon)
-)
-gdf_stations = gpd.GeoDataFrame(
-    stations,
-    geometry=gpd.points_from_xy(
-        stations.lon, stations.lat
-    ),  # Use lon, lat order
-    crs="EPSG:4326",
-)
-# Choose a suitable projected CRS for the area (e.g., UTM zone or a state plane)
-# Using NAD83 / Conus Albers (EPSG:5070) as an example for continental US
-target_crs = "EPSG:5070"
-gdf_joined_proj = gdf_joined.to_crs(target_crs)
-gdf_stations_proj = gdf_stations.to_crs(target_crs)
-
-# create buffers around stations
-station_buf = gdf_stations_proj.geometry.buffer(threshold_meters)
-# Use union_all() as requested (note: unary_union is generally preferred)
-# Ensure union_all is available (might require specific geopandas version)
-if hasattr(station_buf, "union_all"):
-    combined_buffer = station_buf.union_all()
-else:
-    # Fallback or error if union_all is not present
-    print(
-        "Warning: station_buf.union_all() not available. Using unary_union as fallback."
-    )
-    combined_buffer = station_buf.unary_union  # Fallback
-
-is_within = gdf_joined_proj.geometry.within(combined_buffer)
-joined["nearStation"] = is_within.values
-joined_post_filter = joined[~joined["nearStation"]]
-print(
-    f"Done! Faults within {threshold_miles} miles of service station labeled."
-)
-print(
-    f"When filtered, this removes {len(joined_pre_station_filter) - len(joined_post_filter)} rows"
-)
-# Apply the filter
-# joined = joined_post_filter # Uncomment this line to actually apply the filter
-print("Note: Geospatial filter is calculated but NOT applied by default.")
-print("Uncomment 'joined = joined_post_filter' to apply it.")
-
-
-# --- Active Filter ---
-print("Filtering for active=True faults...")
-joined_pre_active_filter = joined
-# Ensure 'active' column exists and handle potential non-boolean values if necessary
-if "active" in joined.columns:
-    # Convert potential string 'true'/'false' to boolean if needed
-    if joined["active"].dtype == "object":
-        joined["active"] = (
-            joined["active"].str.lower().map({"true": True, "false": False})
-        )
-    # Fill NA values if any - assuming inactive if unknown
-    joined["active"] = joined["active"].fillna(False)
-    joined_active = joined[
-        joined["active"]
-    ].copy()  # Use .copy() to avoid SettingWithCopyWarning
-    print(
-        f"Number of rows after filtering active=False out: {len(joined_active)}"
-    )
-    print(
-        f"Rows removed by active filter: {len(joined_pre_active_filter) - len(joined_active)}"
-    )
-    joined = joined_active
-else:
-    print("Warning: 'active' column not found. Skipping active filter.")
-
-
-# --- Time Window Calculation ---
-target_spn = 5246
-print(f"Calculating target window for SPN {target_spn}...")
-# Ensure EventTimeStamp is datetime
-joined["EventTimeStamp"] = pd.to_datetime(joined["EventTimeStamp"])
-# Sort by EquipmentID and then chronologically by EventTimeStamp
-print("Sorting data by EquipmentID and EventTimeStamp...")
-joined = joined.sort_values(by=["EquipmentID", "EventTimeStamp"]).copy()
-print("Sorting complete.")
-
-# --- Calculate time_since_last_fault ---
-print("Calculating time since last fault...")
-joined["time_since_last_fault"] = joined.groupby("EquipmentID")[
-    "EventTimeStamp"
-].diff()
-print("Calculation complete.")
-
-# Create a Series containing only the timestamps of trigger events
-trigger_timestamps_only = joined["EventTimeStamp"].where(
-    joined["spn"] == target_spn
-)
-
-# For each row, find the timestamp of the *next* trigger event within its group
-print("Calculating next trigger time...")
-joined["next_trigger_time"] = trigger_timestamps_only.groupby(
-    joined["EquipmentID"]
-).bfill()
-# Calculate the start of the 2-hour window before the next trigger
-joined["window_start_time"] = joined["next_trigger_time"] - pd.Timedelta(
-    hours=2.5
-)
-# Label rows as True if their timestamp falls within the window
-print("Labeling derate window...")
-joined["derate_window"] = (
-    (joined["EventTimeStamp"] >= joined["window_start_time"])
-    & (joined["EventTimeStamp"] <= joined["next_trigger_time"])
-    & (joined["next_trigger_time"].notna())
-)
-# --- Verification ---
-print("\nVerification:")
-print(
-    "Value counts for 'derate_window':\n",
-    joined["derate_window"].value_counts(dropna=False),
-)
-print(
-    "\nValue counts for 'spn' (to confirm target SPN exists):\n",
-    joined["spn"].value_counts(dropna=False).head(),  # Show top SPNs
-)
-# Display some rows where derate_window is True (if any)
-print("\nSample rows where derate_window is True:")
-print(
-    joined[joined["derate_window"]][
-        ["EquipmentID", "EventTimeStamp", "spn", "next_trigger_time"]
-    ].head()
-)
-
-# --- Feature Selection ---
-# Define target
-target = "derate_window"  # Define target column name
-y = joined[target].astype(int)
-
-# Define features for modeling
-# Exclude identifiers, intermediate calculation columns, the target itself,
-# and columns used only for filtering/labeling
-columns_to_drop_for_X = [
-    target,
-    "RecordID",
-    "EventTimeStamp",
-    "next_trigger_time",
-    "window_start_time",
-    "nearStation",  # Used for filtering, not a feature itself
-    "active",  # Used for filtering
-    "geometry",  # Geopandas object, not usable directly
-    # Add any other columns that should not be features
-    "LocationMethod",  # Example: If deemed not useful or problematic
-]
-
-# Start with all columns and drop the unwanted ones
-features_to_keep = joined.columns.difference(
-    columns_to_drop_for_X, sort=False
-).tolist()
-
-# Ensure 'time_since_last_fault' is included if it exists
-if (
-    "time_since_last_fault" not in features_to_keep
-    and "time_since_last_fault" in joined.columns
-):
-    features_to_keep.append("time_since_last_fault")
-
-# Handle potential case where diagnostic columns might be boolean/object instead of numeric
-# Convert boolean diagnostic columns to int (0/1)
-# Make sure 'diagnostics' DataFrame is defined before this loop
-if "diagnostics" in locals():
-    bool_diagnostic_cols = diagnostics.select_dtypes(include="bool").columns
-    for col in bool_diagnostic_cols:
-        if col in joined.columns:
-            joined[col] = joined[col].astype(int)
-else:
-    print(
-        "Warning: 'diagnostics' DataFrame not found, skipping boolean conversion."
-    )
-
-
-print(f"\nFeatures selected for modeling ({len(features_to_keep)}):")
-# print(features_to_keep) # Uncomment to see the full list
-X = joined[features_to_keep].copy()  # Use .copy()
-print(X.dtypes)
-
-# # --- Train/Test Split ---
-# print("\nSplitting data into training and testing sets...")
-# X_train, X_test, y_train, y_test = train_test_split(
-#     X, y, stratify=y, test_size=0.2, random_state=42
-# )
-# print(f"Training set shape: {X_train.shape}, Test set shape: {X_test.shape}")
-# print(f"Training target distribution:\n{y_train.value_counts(normalize=True)}")
-# print(f"Test target distribution:\n{y_test.value_counts(normalize=True)}")
+cm = pd.DataFrame(cm)
+TN = cm.iloc[0, 0]
+FP = cm.iloc[0, 1]
+FN = cm.iloc[1, 0]
+TP = cm.iloc[1, 1]
+Costs = FP * 500
+Savings = TP * 4000
+Net = Savings - Costs
+print(Net)
+plt.show()
