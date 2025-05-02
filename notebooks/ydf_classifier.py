@@ -11,7 +11,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 
 # load data
-dtypes = {
+column_dtypes = {
     "EquipmentID": object,
     # "EventTimeStamp": "datetime64[ns]",
     "spn": int,
@@ -38,10 +38,11 @@ dtypes = {
     "TurboBoostPressure": float,
 }
 data = pd.read_csv(
-    "../data/model_data.csv", dtype=dtypes, parse_dates=["EventTimeStamp"]
+    "../data/model_data.csv",
+    dtype=column_dtypes,
+    parse_dates=["EventTimeStamp"],
 )
 
-# prep data for split
 predictors = [
     col
     for col in data.columns
@@ -56,8 +57,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # Concatenate features and target for YDF training
-train_df = pd.concat([X_train, y_train], axis=1)
-test_df = pd.concat([X_test, y_test], axis=1)
+train_df = pd.DataFrame(X_train).join(pd.Series(y_train, name="derate_window"))
+test_df = pd.DataFrame(X_test).join(pd.Series(y_test, name="derate_window"))
 # --- Adjustments for Model Improvement ---
 print("Starting model training with tuned hyperparameters...")
 
@@ -96,18 +97,20 @@ print(classification_report(y_test, y_pred_class))
 print("\nConfusion Matrix:")
 cm = confusion_matrix(y_test, y_pred_class)
 disp = ConfusionMatrixDisplay(
-    confusion_matrix=cm, display_labels=sorted(y_test.unique())
+    confusion_matrix=cm, display_labels=["No Derate", "Derate"]
 )
 disp.plot()
 plt.title("Confusion Matrix")
 
 cm = pd.DataFrame(cm)
-TN = cm.iloc[0, 0]
-FP = cm.iloc[0, 1]
-FN = cm.iloc[1, 0]
-TP = cm.iloc[1, 1]
+TN = cm.iloc[0, 0].astype(int)
+FP = cm.iloc[0, 1].astype(int)
+FN = cm.iloc[1, 0].astype(int)
+TP = cm.iloc[1, 1].astype(int)
 Costs = FP * 500
 Savings = TP * 4000
 Net = Savings - Costs
-print(Net)
+print(f"Net savings: ${Net}")
+
+# show confusion matrix plot
 plt.show()
