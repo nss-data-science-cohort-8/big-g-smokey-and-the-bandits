@@ -8,7 +8,6 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
 )
-from sklearn.model_selection import train_test_split
 
 faults_raw = pd.read_csv(
     "../data/J1939Faults.csv", dtype={"EquipmentID": str, "spn": int}
@@ -28,6 +27,7 @@ faults_drop_cols = [
     "LocationTimeStamp",
 ]
 faults = faults_raw.drop(columns=faults_drop_cols)
+
 print("\n\n--------SHAPE OF FAULTS--------")
 print(faults.shape)
 # join diagnostics
@@ -88,10 +88,10 @@ combined_buffer = (
 )  # turns into single geometry which helps with efficiency
 is_within = gdf_joined_proj.geometry.within(combined_buffer)
 joined["nearStation"] = is_within.values
-joined_post_filter = joined[~joined["nearStation"]]
+joined = joined[~joined["nearStation"]]
 print("\nDone! \nFaults within 1km of service station labeled in 'joined'.")
 print(
-    f"When filtered, this removes {len(joined_pre_station_filter['RecordID']) - len(joined_post_filter['RecordID'])} rows"
+    f"When filtered, this removes {len(joined['RecordID']) - len(joined['RecordID'])} rows"
 )
 # filter out active=False
 joined_active = joined[joined["active"]]
@@ -281,9 +281,30 @@ for col in joined.columns:
         joined[col] = joined[col].bfill().ffill()
 print(joined.isna().sum())
 
+### separate data into pre and post 2019
+joined["EventTimeStamp"]
+joined_pre_2019 = joined[joined["EventTimeStamp"].dt.year < 2019]
+joined_post_2019 = joined[joined["EventTimeStamp"].dt.year >= 2019]
+### check to see how many derates happen after 2019
+derates_2019 = joined[
+    (joined["spn"] == 5246) & (joined["EventTimeStamp"] > "12-31-2018")
+].copy()  # & (joined['active'] == True)
+derates_2019["derate_gap"] = (
+    derates_2019.sort_values(by=["EquipmentID", "EventTimeStamp"])
+    .groupby("EquipmentID")["EventTimeStamp"]
+    .diff()
+)
+gap = pd.to_timedelta("24 hours")
+confirmed_derates_2019 = derates_2019[
+    (derates_2019.derate_gap.isnull()) | (derates_2019["derate_gap"] > gap)
+]
+print(
+    f"Goal for predicting derates: {len(confirmed_derates_2019)} derates to predict"
+)
+### --- label predictors ---
 predictors = [
     col
-    for col in joined.columns
+    for col in joined_pre_2019.columns
     if col
     not in [
         "EquipmentID",
@@ -291,38 +312,44 @@ predictors = [
         "derate_window",
         "next_trigger_time",
         "window_start_time",
-    ]  # Keep next_trigger_time out for now
+        "nearStation",
+        "Latitude",
+        "Longitude",
+        "active",
+    ]
 ]
 target = "derate_window"
+### I need to set training data to joined_pre_2019 and test data to joined_post_2019
 
-# prepare data for splitting
-X = joined[predictors]
-y = joined[target]
+# --- Prepare Training and Testing Data ---
+print("Preparing training (pre-2019) and testing (post-2019) data...")
+X_train = joined_pre_2019[predictors]
+y_train = joined_pre_2019[target]
 
-# storing this for later use calculating which True Positives are more than 2 hours out
-original_test_info = joined[
+X_test = joined_post_2019[predictors]
+y_test = joined_post_2019[target]
+
+# Storing necessary info from the original TEST set for evaluation
+original_test_info = joined_post_2019[
     [
-        "EventTimeStamp",
-        "next_trigger_time",
-        "derate_window",
         "EquipmentID",
+        "EventTimeStamp",
         "spn",
+        "next_trigger_time",  # Time of the SPN 5246 event
+        "derate_window",  # "Actual" label
     ]
 ].copy()
-
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, stratify=y, test_size=0.3, random_state=42
-)
-
-# concatenate features and target for ydf training
+print(f"Training data shape: {X_train.shape}")
+print(f"Test data shape: {X_test.shape}")
+# --- Train the Model ---
+# Concatenate features and target for ydf training
 train_df = pd.DataFrame(X_train)
 train_df["derate_window"] = y_train
-test_df = X_test.copy()  # test_df for prediction only needs features
+# test_df for prediction only needs features initially
+test_df_predict = X_test.copy()
 
-# adjustments for model improvement
-print("Starting model training with tuned hyperparameters...")
-
+# Adjustments for model improvement
+print("\nStarting model training with tuned hyperparameters...")
 model = ydf.GradientBoostedTreesLearner(
     label="derate_window",  # Target column name
     task=ydf.Task.CLASSIFICATION,
@@ -331,106 +358,254 @@ model = ydf.GradientBoostedTreesLearner(
     shrinkage=0.1,  # A common starting learning rate
     l2_regularization=0.01,  # ridge regression
     subsample=0.8,  # Use 80% of data per tree
+    # Add random_seed for reproducibility if desired
+    # random_seed=42
 ).train(train_df)
 print("Model training complete.")
+# --- Make Predictions ---
+print("\nMaking predictions on the test set...")
+# Get probability predictions
+y_pred_proba = model.predict(test_df_predict)
+# Convert probabilities to class predictions using a 0.5 threshold
+y_pred_class = (y_pred_proba > 0.5).astype(int)
 
-# adjustments for evaluation
-# Test the model
-print("Making predictions on the test set...")
-y_pred_proba = model.predict(test_df)  # get probability predictions
-
-# convert probabilities to class predictions using a 0.5 threshold
-y_pred_class = (y_pred_proba > 0.5).astype(int)  # Ensure integer type
-
-# create a dataframe for analysis
-test_results = original_test_info.loc[X_test.index].copy()
-
-# add the predictions to this dataframe, ensuring the index aligns
+# --- Prepare Results Dataframe for Analysis ---
+print("Preparing results dataframe for detailed analysis...")
+# Create a dataframe for analysis using the original test set info
+# Ensure index alignment is correct
+test_results = original_test_info.copy()
 test_results["predicted_derate"] = pd.Series(y_pred_class, index=X_test.index)
 
-# find predictions before the 2-hour window
-print("\n--- Analyzing Predictions Before 2-Hour Window ---")
+# Calculate time until the actual trigger event
+test_results["time_until_trigger"] = (
+    test_results["next_trigger_time"] - test_results["EventTimeStamp"]
+)
 
-# calculate time difference for all rows first.
-# where next_trigger_time is nat, the result will also be nat (for timedelta).
-time_diff = test_results["next_trigger_time"] - test_results["EventTimeStamp"]
+# --- Calculate Derate Gaps (Time Since Last Actual Derate) ---
+print("Calculating time gaps between actual derate events...")
+# Identify actual derate trigger events in the test set
+actual_triggers = joined_post_2019[joined_post_2019["spn"] == target_spn].copy()
+actual_triggers = actual_triggers.sort_values(
+    by=["EquipmentID", "EventTimeStamp"]
+)
 
-# assign the result directly. pandas will create the column with timedelta64[ns] dtype.
-test_results["time_until_trigger"] = time_diff
+# Calculate time since the previous trigger for the same equipment
+actual_triggers["derate_gap"] = actual_triggers.groupby("EquipmentID")[
+    "EventTimeStamp"
+].diff()
 
-# define the 2-hour threshold
+# Define the 24-hour threshold
+derate_reset_period = pd.Timedelta(hours=24)
+
+# Add the derate_gap to the test_results dataframe
+# We merge based on the actual trigger time ('next_trigger_time' in test_results
+# corresponds to 'EventTimeStamp' in actual_triggers)
+test_results = pd.merge(
+    test_results,
+    actual_triggers[["EquipmentID", "EventTimeStamp", "derate_gap"]],
+    left_on=["EquipmentID", "next_trigger_time"],
+    right_on=["EquipmentID", "EventTimeStamp"],
+    how="left",
+    suffixes=("", "_trigger"),  # Add suffix to avoid column name clash
+)
+# Drop the redundant EventTimeStamp_trigger column from the merge
+test_results = test_results.drop(columns=["EventTimeStamp_trigger"])
+
+print("Derate gap calculation complete.")
+
+# --- Identify Valuable True Positives (for Savings) ---
+print("\n--- Identifying Valuable True Positives (Savings Calculation) ---")
 two_hours = pd.Timedelta(hours=2)
 
-# filter for predictions that meet the criteria:
-# 1. model predicted derate (predicted_derate == 1)
-# 2. the time_until_trigger is valid (not nat)
-# 3. the time difference is *more* than 2 hours
-early_predictions = test_results[
+# Conditions for a valuable TP:
+# - Model predicted derate (predicted_derate == 1)
+# - It's actually a derate window (derate_window == 1) - Standard TP definition
+# - The prediction was made more than 2 hours before the trigger (time_until_trigger > 2 hours)
+# - The actual trigger event ('next_trigger_time') occurred > 24 hours after the previous one
+#    (derate_gap > 24 hours OR derate_gap is NaT, meaning it's the first one)
+
+valuable_TPs = test_results[
     (test_results["predicted_derate"] == 1)
-    & (test_results["time_until_trigger"].notna())  # Check for valid timedelta
+    & (test_results["derate_window"] == 1)  # Ensure it's a true positive
+    & (test_results["time_until_trigger"].notna())
     & (test_results["time_until_trigger"] > two_hours)
+    & (
+        (test_results["derate_gap"].isna())  # First derate for equipment
+        | (test_results["derate_gap"] > derate_reset_period)
+    )
 ].copy()
 
+# count unique actual derate events that were successfully predicted early
+# Group by the actual trigger event and check if any prediction within that group met the criteria
+valuable_TP_events = valuable_TPs.drop_duplicates(
+    subset=["EquipmentID", "next_trigger_time"]
+)
+valuable_TP_count = len(valuable_TP_events)
+
 print(
-    f"\nFound {len(early_predictions)} instances where the model predicted a derate more than 2 hours before the actual trigger event."
+    f"Found {valuable_TP_count} unique actual derate events predicted >2 hours early with >{derate_reset_period} gap."
+)
+# --- Identify Costly False Positives (for Costs) ---
+print("\n--- Identifying Costly False Positives (Cost Calculation) ---")
+
+# all false positives
+false_positives = test_results[
+    (test_results["predicted_derate"] == 1)
+    & (test_results["derate_window"] == 0)
+].copy()
+
+# trigger times
+actual_trigger_times_map = (
+    actual_triggers.groupby("EquipmentID")["EventTimeStamp"]
+    .apply(list)
+    .to_dict()
 )
 
 
-# standard evaluation
-# note: ydf evaluate needs the target column in the test_df
-test_df_eval = pd.DataFrame(test_df)
-test_df_eval["derate_window"] = y_test  # Create df with target for evaluation
-evaluation = model.evaluate(test_df_eval)
-print("\nFull evaluation report: ", evaluation)
+# 3. Define the function to find time to nearest actual trigger
+def time_to_nearest_trigger(row, trigger_map):
+    equipment_id = row["EquipmentID"]
+    fp_timestamp = row["EventTimeStamp"]
+    # Handle cases where equipment ID might not be in the map
+    if equipment_id not in trigger_map or not trigger_map[equipment_id]:
+        # Return a large timedelta if no triggers exist for this equipment
+        return pd.Timedelta(days=999)
 
-# evaluate using sklearn's f1_score (using y_test and y_pred_class)
-print("Calculating macro F1 score...")
+    trigger_times = trigger_map[equipment_id]
+    # Calculate absolute time differences
+    time_diffs = [
+        abs(fp_timestamp - trigger_time) for trigger_time in trigger_times
+    ]
+    # Return the minimum difference
+    return min(
+        time_diffs
+    )  # time_diffs will not be empty here due to check above
+
+
+# Initialize count and dataframe for initial costly FPs
+costly_FP_count = 0
+initial_costly_FPs = pd.DataFrame()
+
+# 4. Calculate time to nearest actual trigger and filter
+if len(false_positives.index) > 0:
+    print(
+        "Calculating time difference between false positives and nearest actual derate..."
+    )
+    false_positives["time_to_nearest_actual"] = false_positives.apply(
+        time_to_nearest_trigger, args=(actual_trigger_times_map,), axis=1
+    )
+
+    # Filter FPs that are more than 24 hours away from ANY actual trigger
+    initial_costly_FPs = false_positives[
+        false_positives["time_to_nearest_actual"] > derate_reset_period
+    ].copy()
+    print(
+        f"Found {len(initial_costly_FPs)} individual FP rows > {derate_reset_period} from any actual derate."
+    )
+
+else:
+    print("No false positives found.")
+    # initial_costly_FPs remains empty
+
+
+# --- NEW STEP: Filter clustered costly FPs ---
+if len(initial_costly_FPs.index) > 0:
+    print(
+        f"Filtering clustered costly FPs (keeping only those > {derate_reset_period} apart)..."
+    )
+    # Ensure sorting for the diff calculation
+    initial_costly_FPs = initial_costly_FPs.sort_values(
+        by=["EquipmentID", "EventTimeStamp"]
+    )
+
+    # Calculate time since the *previous costly FP* for the same equipment
+    initial_costly_FPs["time_since_last_costly_fp"] = (
+        initial_costly_FPs.groupby("EquipmentID")["EventTimeStamp"].diff()
+    )
+
+    # Keep a costly FP if it's the first one for the equipment (NaT)
+    # OR if it occurred more than 24 hours after the previous costly FP
+    final_costly_FPs = initial_costly_FPs[
+        (initial_costly_FPs["time_since_last_costly_fp"].isna())
+        | (
+            initial_costly_FPs["time_since_last_costly_fp"]
+            > derate_reset_period
+        )
+    ]
+
+    costly_FP_count = len(final_costly_FPs)
+else:
+    # If initial_costly_FPs was empty, the count remains 0
+    print("No initial costly FPs found to filter for clustering.")
+    costly_FP_count = 0
+
+
+print(
+    f"Found {costly_FP_count} final costly False Positive events (separated by > {derate_reset_period})."
+)
+
+# --- Standard Evaluation Metrics (for comparison) ---
+print("\n--- Standard Evaluation Metrics ---")
+# Note: ydf evaluate needs the target column in the test_df
+test_df_eval = X_test.copy()  # Start with features
+test_df_eval["derate_window"] = y_test  # Add actual labels
+
+# Evaluate using sklearn's f1_score (using y_test and y_pred_class)
+print("\nCalculating macro F1 score (sklearn)...")
+# Ensure y_test and y_pred_class are aligned if indices were shuffled (shouldn't be here)
 macro_f1 = f1_score(y_test, y_pred_class, average="macro")
 print(f"Macro F1 Score: {macro_f1:.4f}")
 
-# print classification report and confusion matrix for more detail
-print("\nClassification Report:")
-print(classification_report(y_test, y_pred_class))
+# Print classification report and confusion matrix for more detail
+print("\nClassification Report (sklearn):")
+# Use the actual labels from the test set and the predicted classes
+print(classification_report(y_test, y_pred_class, zero_division=0))
 
-print("\nConfusion Matrix:")
+print("\nConfusion Matrix (sklearn):")
 cm = confusion_matrix(y_test, y_pred_class)
 disp = ConfusionMatrixDisplay(
     confusion_matrix=cm, display_labels=["No Derate", "Derate"]
 )
 disp.plot()
-plt.title("Confusion Matrix")
-
-cm_df = pd.DataFrame(
-    cm,
-    columns=["Pred No Derate", "Pred Derate"],
-    index=["True No Derate", "True Derate"],
-)
-# standard TP, FP, FN, TN from the confusion matrix
-# TN_standard = cm_df.iloc[0, 0]
-FP_standard = cm_df.iloc[0, 1]  # all false positives
-# FN_standard = cm_df.iloc[1, 0]
-TP_standard = cm_df.iloc[1, 1]  # all true positives (within the 2hr window)
-
-early_warning_TP_count = len(early_predictions)
-
-FP_cost_count = FP_standard
-
-Savings_early = early_warning_TP_count * 4000
-Costs_early = FP_cost_count * 500
-Net_early = Savings_early - Costs_early
-
-print("\n--- Cost/Savings Analysis (Early Prediction) ---")
-print(
-    f"Number of valuable early warnings (predicted >2hrs early): {early_warning_TP_count}"
-)
-# print(f"Number of False Positives (cost incurred): {FP_cost_count}")
-# print(f"Total Savings from early warnings: ${Savings_early}")
-# print(f"Total Costs from False Positives: ${Costs_early}")
-print(f"Net Savings (Early Warning Focused): ${Net_early}")
-
-# standard net savings for comparison
-Net_standard = (TP_standard * 4000) - (FP_standard * 500)
-print(f"\nNet savings based on standard evaluation (all TPs): ${Net_standard}")
-
-# show confusion matrix plot
+plt.title("Confusion Matrix (Standard)")
+# Show confusion matrix plot
 plt.show()
+
+# Standard TP/FP from confusion matrix for comparison
+TN_standard = cm[0, 0]
+FP_standard = cm[0, 1]
+FN_standard = cm[1, 0]
+TP_standard = cm[
+    1, 1
+]  # All TPs within the 2hr window, regardless of gap/timing
+
+print("Standard Confusion Matrix Counts:")
+print(f"  True Negatives (TN): {TN_standard}")
+print(f"  False Positives (FP): {FP_standard}")
+print(f"  False Negatives (FN): {FN_standard}")
+print(
+    f"  True Positives (TP): {TP_standard}  <-- target for this is derate window"
+)
+
+Net_standard = (TP_standard * 4000) - (FP_standard * 500)
+print(
+    f"\nNet savings based on standard evaluation (all TPs, all FPs): ${Net_standard}"
+)
+print(
+    f"\nGoal for predicting derates (from previous script): {len(confirmed_derates_2019)} derates to predict"
+)  # Print the goal again
+print(
+    f"Actual correctly predicted derates: {len(valuable_TP_events)} :("
+)  # Print the actual number of correctly predicted derates
+
+# --- Calculate Final Cost/Savings ---
+print("\n--- Final Cost/Savings Analysis ---")
+Savings = valuable_TP_count * 4000
+Costs = costly_FP_count * 500
+Net_Savings = Savings - Costs
+
+print(f"Valuable True Positives (Savings): {valuable_TP_count}")
+print(f"Costly False Positives (Costs): {costly_FP_count}")
+print(f"Total Savings: ${Savings}")
+print(f"Total Costs: ${Costs}")
+print(f"Net Savings (Custom Definition): ${Net_Savings}")
