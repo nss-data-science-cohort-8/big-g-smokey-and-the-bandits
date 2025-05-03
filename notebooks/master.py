@@ -160,37 +160,6 @@ print(
     ].head()
 )
 
-# Display some rows around a trigger event for a specific EquipmentID
-# Find an EquipmentID that has a trigger event
-example_eqid = joined.loc[joined["spn"] == target_spn, "EquipmentID"].iloc[0]
-print(f"\nSample data around trigger for EquipmentID: {example_eqid}")
-example_trigger_time = joined.loc[
-    (joined["EquipmentID"] == example_eqid) & (joined["spn"] == target_spn),
-    "EventTimeStamp",
-].min()
-# Filter data around that time for that equipment
-print(
-    joined[
-        (joined["EquipmentID"] == example_eqid)
-        & (
-            joined["EventTimeStamp"]
-            >= (example_trigger_time - pd.Timedelta(hours=3))
-        )
-        & (
-            joined["EventTimeStamp"]
-            <= (example_trigger_time + pd.Timedelta(hours=1))
-        )
-    ][
-        [
-            "EquipmentID",
-            "EventTimeStamp",
-            "spn",
-            "next_trigger_time",
-            "window_start_time",
-            "derate_window",
-        ]
-    ]
-)
 
 joined = joined.drop(
     columns=[
@@ -347,7 +316,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # concatenate features and target for ydf training
-train_df = X_train.join(y_train)
+train_df = pd.DataFrame(X_train)
+train_df["derate_window"] = y_train
 test_df = X_test.copy()  # test_df for prediction only needs features
 
 # adjustments for model improvement
@@ -407,9 +377,9 @@ print(
 
 
 # standard evaluation
-# evaluate using ydf's built-in evaluation (optional but provides detailed report)
 # note: ydf evaluate needs the target column in the test_df
-test_df_eval = test_df.join(y_test)  # Create df with target for evaluation
+test_df_eval = pd.DataFrame(test_df)
+test_df_eval["derate_window"] = y_test  # Create df with target for evaluation
 evaluation = model.evaluate(test_df_eval)
 print("\nFull evaluation report: ", evaluation)
 
