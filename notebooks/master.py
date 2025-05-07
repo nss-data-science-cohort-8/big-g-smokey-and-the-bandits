@@ -1,6 +1,8 @@
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import seaborn as sns
 import ydf
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
@@ -54,9 +56,10 @@ print(
 joined = faults.merge(
     diagnostics, how="inner", left_on="RecordID", right_on="FaultId"
 )
-joined_pre_station_filter = joined
+
 # filter out near service stations
 joined_pre_station_filter = joined
+original_count = len(joined)
 print("Labeling faults near service stations...")
 stations = pd.DataFrame(
     {
@@ -89,10 +92,9 @@ combined_buffer = (
 is_within = gdf_joined_proj.geometry.within(combined_buffer)
 joined["nearStation"] = is_within.values
 joined = joined[~joined["nearStation"]]
+filtered_count = len(joined)
 print("\nDone! \nFaults within 1km of service station labeled in 'joined'.")
-print(
-    f"When filtered, this removes {len(joined['RecordID']) - len(joined['RecordID'])} rows"
-)
+print(f"When filtered, this removes {original_count - filtered_count} rows")
 # filter out active=False
 joined_active = joined[joined["active"]]
 joined = joined_active
@@ -282,7 +284,6 @@ for col in joined.columns:
 print(joined.isna().sum())
 
 ### separate data into pre and post 2019
-joined["EventTimeStamp"]
 joined_pre_2019 = joined[joined["EventTimeStamp"].dt.year < 2019]
 joined_post_2019 = joined[joined["EventTimeStamp"].dt.year >= 2019]
 ### check to see how many derates happen after 2019
@@ -329,6 +330,25 @@ y_train = joined_pre_2019[target]
 X_test = joined_post_2019[predictors]
 y_test = joined_post_2019[target]
 
+# ----CORRELATION MATRIX----
+correlation_matrix = X_train.corr()
+# Plotting the correlation matrix
+plt.figure(figsize=(12, 10))
+sns.heatmap(
+    correlation_matrix, cmap="coolwarm", annot=False
+)  # annot=True is too dense for 80 features
+plt.title("Feature Correlation Matrix")
+plt.savefig("../assets/corr_matrix.png")
+plt.close()
+
+# Find highly correlated pairs
+upper_tri = correlation_matrix.where(
+    np.triu(np.ones(correlation_matrix.shape), k=1).astype(bool)
+)
+highly_correlated = [
+    column for column in upper_tri.columns if any(upper_tri[column].abs() > 0.9)
+]
+print("Features with high correlation (>0.9) with others:", highly_correlated)
 # Storing necessary info from the original TEST set for evaluation
 original_test_info = joined_post_2019[
     [
@@ -358,8 +378,6 @@ model = ydf.GradientBoostedTreesLearner(
     shrinkage=0.1,  # A common starting learning rate
     l2_regularization=0.01,  # ridge regression
     subsample=0.8,  # Use 80% of data per tree
-    # Add random_seed for reproducibility if desired
-    # random_seed=42
 ).train(train_df)
 print("Model training complete.")
 # --- Make Predictions ---
@@ -561,15 +579,45 @@ print("\nClassification Report (sklearn):")
 # Use the actual labels from the test set and the predicted classes
 print(classification_report(y_test, y_pred_class, zero_division=0))
 
-print("\nConfusion Matrix (sklearn):")
+# get feature importances
+print("\n--- Feature Importances (YDF Model) ---")
+try:
+    importances_dict = model.variable_importances()
+    # print("Variable importances dict:", importances_dict)
+    # Prefer SUM_SCORE if available, else NUM_AS_ROOT, else first available
+    if "SUM_SCORE" in importances_dict:
+        importances = importances_dict["SUM_SCORE"]
+    elif "NUM_AS_ROOT" in importances_dict:
+        importances = importances_dict["NUM_AS_ROOT"]
+    else:
+        key = list(importances_dict.keys())[0]
+        importances = importances_dict[key]
+        print(f"Using variable importance type: {key}")
+
+    # print("importances:", importances)
+    # If importances is a list of tuples, convert accordingly
+    if importances and isinstance(importances[0], tuple):
+        importances_df = pd.DataFrame(
+            importances, columns=["importance", "attribute"]
+        )
+    else:
+        importances_df = pd.DataFrame(importances)
+    importances_df = importances_df.sort_values(
+        by="importance", ascending=False
+    )
+    print(importances_df.head(20))
+except Exception as e:
+    print(f"Could not retrieve feature importances: {e}")
+
+print("\nCreating Confusion Matrix (sklearn)...")
 cm = confusion_matrix(y_test, y_pred_class)
 disp = ConfusionMatrixDisplay(
     confusion_matrix=cm, display_labels=["No Derate", "Derate"]
 )
 disp.plot()
 plt.title("Confusion Matrix (Standard)")
-# Show confusion matrix plot
-plt.show()
+plt.savefig("../assets/confusion.png")
+plt.close()
 
 # Standard TP/FP from confusion matrix for comparison
 TN_standard = cm[0, 0]
