@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import shap
 import ydf
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
@@ -380,6 +381,50 @@ model = ydf.GradientBoostedTreesLearner(
     subsample=0.8,  # Use 80% of data per tree
 ).train(train_df)
 print("Model training complete.")
+
+# --- SHAP Analysis ---
+print("\n--- Running SHAP Analysis ---")
+background = (
+    X_train.sample(n=100, random_state=42) if len(X_train) > 100 else X_train
+)
+explainer = shap.Explainer(model.predict, background)
+X_test_sample = (
+    X_test.sample(n=100, random_state=42) if len(X_test) > 100 else X_test
+)
+shap_values = explainer(X_test_sample)
+
+# SHAP summary plot
+shap.summary_plot(shap_values, X_test_sample, show=False)
+fig = plt.gcf()  # Get current figure
+fig.suptitle("SHAP Summary Plot (Test Sample)")
+fig.tight_layout()
+fig.savefig("../assets/shap_summary.png")
+plt.close(fig)
+print("SHAP summary plot saved to ../assets/shap_summary.png")
+
+# SHAP bar plot
+shap_bar = shap.plots.bar(shap_values, show=False)  # Returns Axes
+
+# don't show mean absolute shap value since they're all 0 bc they're so small.
+for txt in shap_bar.texts:
+    txt.set_visible(False)
+
+fig_bar = shap_bar.get_figure()
+shap_bar.set_title("SHAP Bar")
+fig_bar.tight_layout()
+fig_bar.savefig("../assets/shap_bar.png")
+plt.close(fig_bar)
+print("SHAP bar plot saved to ../assets/shap_bar.png")
+
+# SHAP beeswarm plot
+shap_beeswarm = shap.plots.beeswarm(shap_values, show=False)  # Returns Axes
+fig_beeswarm = shap_beeswarm.get_figure()
+shap_beeswarm.set_title("SHAP Beeswarm")
+fig_beeswarm.tight_layout()
+fig_beeswarm.savefig("../assets/shap_beeswarm.png")
+plt.close(fig_beeswarm)
+print("SHAP beeswarm plot saved to ../assets/shap_beeswarm.png")
+
 # --- Make Predictions ---
 print("\nMaking predictions on the test set...")
 # Get probability predictions
@@ -578,6 +623,8 @@ print(f"Macro F1 Score: {macro_f1:.4f}")
 print("\nClassification Report (sklearn):")
 # Use the actual labels from the test set and the predicted classes
 print(classification_report(y_test, y_pred_class, zero_division=0))
+
+# Shap analysis
 
 # get feature importances
 print("\n--- Feature Importances (YDF Model) ---")
