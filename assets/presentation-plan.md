@@ -117,6 +117,16 @@ This document outlines the steps performed by the Python script to predict vehic
     *   Hyperparameters are set: `num_trees=500`, `max_depth=10`, `shrinkage=0.1`, `l2_regularization=0.01`, `subsample=0.8`.
     *   The model is trained using `model.train(train_df)`.
 
+| Hyperparameter       | Purpose                                         | Typical Effect                        |
+|----------------------|-------------------------------------------------|---------------------------------------|
+| `label`              | Target column to predict                        | Defines what the model learns         |
+| `task`               | Type of problem (classification/regression)     | Sets loss function/objective          |
+| `num_trees`          | Number of trees in the ensemble                 | More trees = better fit, more time    |
+| `max_depth`          | Maximum depth of each tree                      | Deeper = more complex, risk overfit   |
+| `shrinkage`          | Learning rate (step size for each tree)         | Lower = slower, more robust           |
+| `l2_regularization`  | L2 penalty on weights                           | Reduces overfitting                   |
+| `subsample`          | Fraction of data used per tree                  | Adds randomness, reduces overfitting  |
+
 ## 10. Prediction
 
 *   **Predict Probabilities:** The trained model (`model.predict(test_df_predict)`) is used to get probability predictions for the positive class on the test set.
@@ -195,3 +205,276 @@ This document outlines the steps performed by the Python script to predict vehic
 
 This script performs a comprehensive workflow from data ingestion and cleaning to model training and a nuanced, business-logic-driven evaluation of the model's performance in predicting vehicle derate events.
 
+## output from model: 
+
+```
+--------SHAPE OF FAULTS--------
+(1187335, 10)
+--------NaNs--------
+Id         0
+Name       0
+Value      0
+FaultId    0
+dtype: int64
+
+len(Id): 12821626
+N unique_Id: 12821626
+
+--------RECORD ID vs FAULT ID--------
+n_unique FaultID: 1187335
+n_unique RecordID: 1187335
+Labeling faults near service stations...
+
+Done!
+Faults within 1km of service station labeled in 'joined'.
+When filtered, this removes 129284 rows
+
+Number of rows after filtering active=False out: 549008
+Rows removed: 638327
+Sorting data by EquipmentID and EventTimeStamp...
+Sorting complete.
+Calculating next trigger time...
+Labeling derate window...
+
+Verification:
+Value counts for 'derate_window':
+ derate_window
+False    548064
+True        944
+Name: count, dtype: int64
+
+Value counts for 'spn' (to confirm target SPN exists):
+ spn
+111       174649
+929       115784
+96         44398
+829        43350
+639        16172
+           ...
+521032         1
+4380           1
+781            1
+442            1
+54478          1
+Name: count, Length: 420, dtype: int64
+
+Sample rows where derate_window is True:
+       EquipmentID      EventTimeStamp   spn   next_trigger_time
+996835   105349576 2018-07-06 09:42:48  5246 2018-07-06 09:42:48
+972882   105427203 2018-04-27 06:07:55  5246 2018-04-27 06:07:55
+5712          1329 2015-02-25 13:53:08  4344 2015-02-25 13:53:08
+5713          1329 2015-02-25 13:53:08  5246 2015-02-25 13:53:08
+83425         1339 2015-06-12 15:35:22  5246 2015-06-12 15:35:22
+1001106          NaN
+358800           NaN
+927313           NaN
+936445     1474291.0
+936451         224.0
+             ...
+1157136        478.0
+4245             NaN
+4427          6371.0
+6438        164454.0
+4952             NaN
+Name: time_since_last_fault, Length: 549008, dtype: float64
+EquipmentID                         object
+EventTimeStamp              datetime64[ns]
+next_trigger_time           datetime64[ns]
+window_start_time           datetime64[ns]
+spn                                  int64
+fmi                                  int64
+active                                bool
+derate_window                         bool
+time_since_last_fault              float64
+fault_frequency                      int64
+Latitude                           float64
+Longitude                          float64
+nearStation                           bool
+Speed                               object
+BarometricPressure                  object
+EngineCoolantTemperature            object
+EngineLoad                          object
+EngineOilPressure                   object
+EngineOilTemperature                object
+EngineRpm                           object
+EngineTimeLtd                       object
+FuelLtd                             object
+FuelRate                            object
+FuelTemperature                     object
+Throttle                            object
+TurboBoostPressure                  object
+dtype: object
+EquipmentID                         object
+EventTimeStamp              datetime64[ns]
+next_trigger_time           datetime64[ns]
+window_start_time           datetime64[ns]
+spn                                  int64
+fmi                                  int64
+active                               int64
+derate_window                        int64
+time_since_last_fault              float64
+fault_frequency                      int64
+Latitude                           float64
+Longitude                          float64
+nearStation                          int64
+Speed                              float64
+BarometricPressure                 float64
+EngineCoolantTemperature           float64
+EngineLoad                         float64
+EngineOilPressure                  float64
+EngineOilTemperature               float64
+EngineRpm                          float64
+EngineTimeLtd                      float64
+FuelLtd                            float64
+FuelRate                           float64
+FuelTemperature                    float64
+Throttle                           float64
+TurboBoostPressure                 float64
+dtype: object
+EquipmentID                      0
+EventTimeStamp                   0
+next_trigger_time           418880
+window_start_time           418880
+spn                              0
+fmi                              0
+active                           0
+derate_window                    0
+time_since_last_fault         1062
+fault_frequency                  0
+Latitude                         0
+Longitude                        0
+nearStation                      0
+Speed                        19342
+BarometricPressure           17717
+EngineCoolantTemperature     17730
+EngineLoad                   18198
+EngineOilPressure            17611
+EngineOilTemperature         19249
+EngineRpm                    17295
+EngineTimeLtd                21574
+FuelLtd                      18263
+FuelRate                     18467
+FuelTemperature             277724
+Throttle                    173300
+TurboBoostPressure           19814
+dtype: int64
+Throttle
+100.0    254595
+0.0      101021
+38.8        226
+38.4        225
+37.6        221
+          ...
+87.6         16
+87.2         16
+82.4         16
+84.4         15
+88.0         13
+Name: count, Length: 251, dtype: int64
+EquipmentID                      0
+EventTimeStamp                   0
+next_trigger_time           418880
+window_start_time           418880
+spn                              0
+fmi                              0
+active                           0
+derate_window                    0
+time_since_last_fault            0
+fault_frequency                  0
+Latitude                         0
+Longitude                        0
+nearStation                      0
+Speed                            0
+BarometricPressure               0
+EngineCoolantTemperature         0
+EngineLoad                       0
+EngineOilPressure                0
+EngineOilTemperature             0
+EngineRpm                        0
+EngineTimeLtd                    0
+FuelLtd                          0
+FuelRate                         0
+FuelTemperature                  0
+Throttle                         0
+TurboBoostPressure               0
+dtype: int64
+Goal for predicting derates: 43 derates to predict
+Preparing training (pre-2019) and testing (post-2019) data...
+Features with high correlation (>0.9) with others: ['FuelRate']
+Training data shape: (492397, 17)
+Test data shape: (56611, 17)
+
+Starting model training with tuned hyperparameters...
+Train model on 492397 examples
+Model trained in 0:00:24.124655
+Model training complete.
+
+Making predictions on the test set...
+Preparing results dataframe for detailed analysis...
+Calculating time gaps between actual derate events...
+Derate gap calculation complete.
+
+--- Identifying Valuable True Positives (Savings Calculation) ---
+Found 0 unique actual derate events predicted >2 hours early with >1 days 00:00:00 gap.
+
+--- Identifying Costly False Positives (Cost Calculation) ---
+Calculating time difference between false positives and nearest actual derate...
+Found 8 individual FP rows > 1 days 00:00:00 from any actual derate.
+Filtering clustered costly FPs (keeping only those > 1 days 00:00:00 apart)...
+Found 3 final costly False Positive events (separated by > 1 days 00:00:00).
+
+--- Standard Evaluation Metrics ---
+
+Calculating macro F1 score (sklearn)...
+Macro F1 Score: 0.8598
+
+Classification Report (sklearn):
+              precision    recall  f1-score   support
+
+           0       1.00      1.00      1.00     56523
+           1       0.87      0.61      0.72        88
+
+    accuracy                           1.00     56611
+   macro avg       0.94      0.81      0.86     56611
+weighted avg       1.00      1.00      1.00     56611
+
+
+--- Feature Importances (YDF Model) ---
+     importance                 attribute
+0   1448.630960                       spn
+1    142.768980             EngineTimeLtd
+2     76.703217                   FuelLtd
+3     71.113743      EngineOilTemperature
+4     59.218517     time_since_last_fault
+5     48.859996           fault_frequency
+6     44.221195                       fmi
+7     42.081274           FuelTemperature
+8     39.203473         EngineOilPressure
+9     25.106245                 EngineRpm
+10    21.467151                  FuelRate
+11    21.320740  EngineCoolantTemperature
+12    20.353880                EngineLoad
+13    19.430094                     Speed
+14    17.301844        TurboBoostPressure
+15    14.441224        BarometricPressure
+16    12.348499                  Throttle
+
+Creating Confusion Matrix (sklearn)...
+Standard Confusion Matrix Counts:
+  True Negatives (TN): 56515
+  False Positives (FP): 8
+  False Negatives (FN): 34
+  True Positives (TP): 54  <-- target for this is derate window
+
+Net savings based on standard evaluation (all TPs, all FPs): $212000
+
+Goal for predicting derates (from previous script): 43 derates to predict
+Actual correctly predicted derates: 0 :(
+
+--- Final Cost/Savings Analysis ---
+Valuable True Positives (Savings): 0
+Costly False Positives (Costs): 3
+Total Savings: $0
+Total Costs: $1500
+Net Savings (Custom Definition): $-1500
+```
