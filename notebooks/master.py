@@ -382,14 +382,19 @@ model = ydf.GradientBoostedTreesLearner(
 ).train(train_df)
 print("Model training complete.")
 
+# Model Description:
+print("----Model Description----")
+print(model.describe())
+print("-------------------------\n")
+
 # --- SHAP Analysis ---
 print("\n--- Running SHAP Analysis ---")
 background = (
-    X_train.sample(n=100, random_state=42) if len(X_train) > 100 else X_train
+    X_train.sample(n=500, random_state=42) if len(X_train) > 500 else X_train
 )
 explainer = shap.Explainer(model.predict, background)
 X_test_sample = (
-    X_test.sample(n=100, random_state=42) if len(X_test) > 100 else X_test
+    X_test.sample(n=500, random_state=42) if len(X_test) > 500 else X_test
 )
 shap_values = explainer(X_test_sample)
 
