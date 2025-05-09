@@ -129,7 +129,7 @@ joined["next_trigger_time"] = trigger_timestamps_only.groupby(
     joined["EquipmentID"]
 ).bfill()
 
-# Calculate the start of the 2-hour window before the next trigger
+# Calculate the start of the n-hour window before the next trigger
 joined["window_start_time"] = joined["next_trigger_time"] - pd.Timedelta(
     hours=2.0
 )
@@ -281,7 +281,7 @@ print(joined.isna().sum())
 print(joined["Throttle"].value_counts())
 for col in joined.columns:
     if joined[col].dtype == "int64" or joined[col].dtype == "float64":
-        joined[col] = joined[col].bfill().ffill()
+        joined[col] = joined[col].ffill().bfill() # remove bfill?
 print(joined.isna().sum())
 
 ### separate data into pre and post 2019
@@ -309,6 +309,7 @@ predictors = [
     for col in joined_pre_2019.columns
     if col
     not in [
+        # "spn",
         "EquipmentID",
         "EventTimeStamp",
         "derate_window",
@@ -434,8 +435,8 @@ print("SHAP beeswarm plot saved to ../assets/shap_beeswarm.png")
 print("\nMaking predictions on the test set...")
 # Get probability predictions
 y_pred_proba = model.predict(test_df_predict)
-# Convert probabilities to class predictions using a 0.5 threshold
-y_pred_class = (y_pred_proba > 0.5).astype(int)
+# Convert probabilities to class predictions using a n.n threshold
+y_pred_class = (y_pred_proba > 0.95).astype(int)
 
 # --- Prepare Results Dataframe for Analysis ---
 print("Preparing results dataframe for detailed analysis...")
