@@ -156,13 +156,14 @@ print(
 )
 
 # Display some rows where derate_window is True (if any)
+print("===========================================")
 print("\nSample rows where derate_window is True:")
 print(
     joined[joined["derate_window"]][
-        ["EquipmentID", "EventTimeStamp", "spn", "next_trigger_time"]
+        ["EquipmentID", "EventTimeStamp", "spn", "next_trigger_time", "derate_window"]
     ].head()
 )
-
+print("\n==========================================\n")
 
 joined = joined.drop(
     columns=[
