@@ -160,7 +160,13 @@ print("===========================================")
 print("\nSample rows where derate_window is True:")
 print(
     joined[joined["derate_window"]][
-        ["EquipmentID", "EventTimeStamp", "spn", "next_trigger_time", "derate_window"]
+        [
+            "EquipmentID",
+            "EventTimeStamp",
+            "spn",
+            "next_trigger_time",
+            "derate_window",
+        ]
     ].head()
 )
 print("\n==========================================\n")
@@ -282,7 +288,7 @@ print(joined.isna().sum())
 print(joined["Throttle"].value_counts())
 for col in joined.columns:
     if joined[col].dtype == "int64" or joined[col].dtype == "float64":
-        joined[col] = joined[col].ffill().bfill() # remove bfill?
+        joined[col] = joined[col].ffill().bfill()  # remove bfill?
 print(joined.isna().sum())
 
 ### separate data into pre and post 2019
